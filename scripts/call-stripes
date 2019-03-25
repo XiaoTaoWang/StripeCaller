@@ -104,7 +104,7 @@ def run():
         from multiprocess import Pool
         import numpy as np
         from scipy import sparse
-        from stripecaller.callers import call_stripe
+        from stripecaller.callers import call_stripes
 
         def worker(tuple_args):
             Lib, key, l_n, b_n, siglevel, fold, maxapart, res = tuple_args
@@ -131,9 +131,11 @@ def run():
             del cH
 
             key = key.lstrip('chr')
-            annot = call_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
+            h_candi, v_candi = call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
 
-            return key, annot
+            del M, cM
+
+            return key
         
         logger.info('Loading contact matrices from cool ...')
         Lib = cooler.Cooler(args.path)
