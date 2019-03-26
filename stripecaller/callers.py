@@ -1,8 +1,10 @@
 import logging
+from collections import defaultdict
 import numpy as np
 from scipy import sparse
 from scipy.stats import poisson
 from scipy.signal import convolve2d
+from scipy.signal import find_peaks, peak_widths
 from sklearn.decomposition import PCA
 
 logger = logging.getLogger(__name__)
@@ -44,14 +46,14 @@ def _horizontal_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
     txi, tyi = xi[fm], yi[fm]
     pool_j = np.tile(tyi, (b_n, 1))
     pool_i = np.r_[[txi-i for i in range(l_n+1,l_n+b_n+1)]]
-    e_array = np.median(cM[pool_i, pool_j].toarray(), axis=0) * biases
+    e_array = np.median(cM[pool_i, pool_j].toarray(), axis=0) * biases[fm]
     mask = e_array > 0
     tmp = poisson(e_array[mask]).sf(o_array[fm][mask])
     tmp_ = np.zeros(txi.size)
     tmp_[mask] = tmp
     top_p[fm] = tmp_
     tmp_ = np.ones(txi.size) * 20
-    tmp_[mask] = o_array[mask] / e_array[mask]
+    tmp_[mask] = o_array[fm][mask] / e_array[mask]
     top_fold[fm] = tmp_
 
     candi_mask = (top_p < siglevel) & (bottom_p < siglevel) & (top_fold > fold) & (bottom_fold > fold)
@@ -97,14 +99,14 @@ def _vertical_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen):
     txi, tyi = xi[fm], yi[fm]
     pool_i = np.tile(txi, (b_n, 1))
     pool_j = np.r_[[tyi+i for i in range(l_n+1,l_n+b_n+1)]]
-    e_array = np.median(cM[pool_i, pool_j].toarray(), axis=0) * biases
+    e_array = np.median(cM[pool_i, pool_j].toarray(), axis=0) * biases[fm]
     mask = e_array > 0
     tmp = poisson(e_array[mask]).sf(o_array[fm][mask])
     tmp_ = np.zeros(txi.size)
     tmp_[mask] = tmp
     right_p[fm] = tmp_
     tmp_ = np.ones(txi.size) * 20
-    tmp_[mask] = o_array[mask] / e_array[mask]
+    tmp_[mask] = o_array[fm][mask] / e_array[mask]
     right_fold[fm] = tmp_
 
     candi_mask = (left_p < siglevel) & (right_p < siglevel) & (left_fold > fold) & (right_fold > fold)
@@ -143,6 +145,7 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
                  min_seed_len=6, max_gap=5, min_stripe_len=9):
     
     # call horizontal stripes
+    # first run
     xi, yi = _horizontal_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
     h_stripes = {}
     for anchor_x in np.unique(xi):
@@ -154,9 +157,26 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
                                min_seed_len=min_seed_len,
                                max_gap=max_gap,
                                min_stripe_len=min_stripe_len)
-        h_stripes[anchor_x] = tmp
+        if len(tmp):
+            h_stripes[anchor_x] = tmp
+
+    xi, yi = local_cluster(h_stripes, min_count=min_stripe_len)
+    # second run
+    h_stripes = {}
+    for anchor_x in np.unique(xi):
+        ys = yi[xi==anchor_x]
+        pieces, maxlen = consecutive_runs(ys)
+        if maxlen < min_seed_len:
+            continue
+        tmp = extend_stretches(pieces,
+                               min_seed_len=min_seed_len,
+                               max_gap=max_gap,
+                               min_stripe_len=min_stripe_len)
+        if len(tmp):
+            h_stripes[anchor_x] = tmp
     
     # call vertical stripes
+    # first run
     xi, yi = _vertical_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
     v_stripes = {}
     for anchor_y in np.unique(yi):
@@ -168,15 +188,90 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
                                min_seed_len=min_seed_len,
                                max_gap=max_gap,
                                min_stripe_len=min_stripe_len)
-        v_stripes[anchor_y] = tmp
+        if len(tmp):
+            v_stripes[anchor_y] = tmp
+    
+    yi, xi = local_cluster(v_stripes, min_count=min_stripe_len)
+    # second run
+    v_stripes = {}
+    for anchor_y in np.unique(yi):
+        xs = xi[yi==anchor_y]
+        pieces, maxlen = consecutive_runs(xs)
+        if maxlen < min_seed_len:
+            continue
+        tmp = extend_stretches(pieces,
+                               min_seed_len=min_seed_len,
+                               max_gap=max_gap,
+                               min_stripe_len=min_stripe_len)
+        if len(tmp):
+            v_stripes[anchor_y] = tmp
 
     return h_stripes, v_stripes
+
+def local_cluster(candi_dict, min_count=9, min_dis=50000, wlen=100000, res=10000):
+
+    min_dis = min_dis//res
+    wlen = min(wlen//res, 10)
+
+    count = defaultdict(int)
+    for k in candi_dict:
+        count[k] = sum([v[1]-v[0] for v in candi_dict[k]])
+    refidx = range(min(count)-1, max(count)+2) # extend 1 bin
+    signal = np.r_[[count[i] for i in refidx]]
+    summits = find_peaks(signal, height=min_count, distance=min_dis)[0]
+    sorted_summits = [(signal[i],i) for i in summits]
+    sorted_summits.sort(reverse=True)
+
+    peaks = set()
+    records = {}
+    for _, i in sorted_summits:
+        tmp = peak_widths(signal, [i], rel_height=1, wlen=wlen)[2:4]
+        li, ri = int(np.round(tmp[0][0])), int(np.round(tmp[1][0]))
+        lb = refidx[li]
+        rb = refidx[ri]
+        if not len(peaks):
+            peaks.add((refidx[i], lb, rb))
+            for b in range(lb, rb+1):
+                records[b] = (refidx[i], lb, rb)
+        else:
+            for b in range(lb, rb+1):
+                if b in records:
+                    # merge anchors
+                    m_lb = min(lb, records[b][1])
+                    m_rb = max(rb, records[b][2])
+                    summit = records[b][0] # always the highest summit
+                    peaks.remove(records[b])
+                    break
+            else: # loop terminates normally
+                m_lb, m_rb, summit = lb, rb, refidx[i]
+            peaks.add((summit, m_lb, m_rb))
+            for b in range(m_lb, m_rb+1):
+                records[b] = (summit, m_lb, m_rb)
+    
+    anchor_ = []
+    coords_ = []
+    for p in sorted(peaks):
+        tmp = []
+        for i in range(p[1], p[2]+1):
+            if i in candi_dict:
+                for c in candi_dict[i]:
+                    tmp.extend(range(c[0], c[1]))
+        tmp = sorted(set(tmp))
+        anchor_.extend([p[0]]*len(tmp))
+        coords_.extend(tmp)
+    
+    anchor_ = np.r_[anchor_]
+    coords_ = np.r_[coords_]
+
+    return anchor_, coords_
+
         
-def remove_compartment_stripes(Lib, chrom, h_stripes, v_stripes, window=10000000, step=5000000, smooth_factor=1):
+def remove_compartment_stripes(Lib, chrom, h_candi, v_candi, window=10000000, smooth_factor=1):
 
     res = Lib.binsize
     min_matrix = 10
     kernel = np.ones((smooth_factor, smooth_factor))
+    step = window//2
 
     # consistent expected value
     cM = Lib.matrix(balance=True, sparse=True).fetch(chrom)
@@ -199,6 +294,7 @@ def remove_compartment_stripes(Lib, chrom, h_stripes, v_stripes, window=10000000
         mask = np.isnan(Lib.bins().fetch((chrom,start,end))['weight'].values) # gaps
         tmp = np.logical_not(mask) # valid rows or columns
         if tmp.sum() < min_matrix:
+            start += step
             continue
         cM = Lib.matrix(balance=True, sparse=False).fetch((chrom, start, end))
         cM[np.isnan(cM)] = 0
@@ -232,45 +328,55 @@ def remove_compartment_stripes(Lib, chrom, h_stripes, v_stripes, window=10000000
         arr = np.zeros(n)
         arr[convert_index] = fp # PC1
 
-        code = arr > 0
         # correct horizontal stripes
-        for h in h_stripes:
+        for h in h_candi:
             rh = h - start//res
             if (rh < 0) or (rh + 1 > arr.size):
                 continue
-            tmp = h_stripes[h]
-            count = 0
-            for i in range(tmp[0], tmp[1]):
-                ri = i - start//res
-                if (ri < 0) or (ri + 1 > arr.size):
-                    continue
-                if (code[rh]==code[ri]) and (code[rh:ri+1].sum() > 0) and (code[rh:ri+1].sum() < code[rh:ri+1].size):
-                    count += 1
-            if count / (tmp[1]-tmp[0]) > 0.3:
-                del h_stripes[h]
+            tmp = h_candi[h]
+            for d in tmp:
+                count = 0
+                for i in range(d[0], d[1]):
+                    ri = i - start//res
+                    if (ri < 0) or (ri + 1 > arr.size):
+                        continue
+                    if (arr[rh] > 0.5) and (arr[ri] > 0.5) and ((arr[rh:ri+1]<-0.5).sum() > 0):
+                        count += 1
+                    else:
+                        if (arr[rh] < -0.5) and (arr[ri] < -0.5) and ((arr[rh:ri+1]>0.5).sum() > 0):
+                            count += 1
+                if (count / (d[1]-d[0]) > 0.2):
+                    tmp.remove(d)
         
         # correct vertical stripes
-        for v in v_stripes:
+        for v in v_candi:
             rv = v - start//res
             if (rv < 0) or (rv + 1 > arr.size):
                 continue
-            tmp = v_stripes[v]
-            count = 0
-            for i in range(tmp[0], tmp[1]):
-                ri = i - start//res
-                if (ri < 0) or (ri + 1 > arr.size):
-                    continue
-                if (code[rv]==code[ri]) and (code[ri:rv+1].sum() > 0) and (code[ri:rv+1].sum() < code[ri:rv+1].size):
-                    count += 1
-            if count / (tmp[1]-tmp[0]) > 0.3:
-                del v_stripes[v]
+            tmp = v_candi[v]
+            for d in tmp:
+                count = 0
+                for i in range(d[0], d[1]):
+                    ri = i - start//res
+                    if (ri < 0) or (ri + 1 > arr.size):
+                        continue
+                    if (arr[rv] > 0.5) and (arr[ri] > 0.5) and ((arr[ri:rv+1]<-0.5).sum() > 0):
+                        count += 1
+                    else:
+                        if (arr[rv] < -0.5) and (arr[ri] < -0.5) and ((arr[ri:rv+1]>0.5).sum() > 0):
+                            count += 1
+                if (count / (d[1]-d[0]) > 0.2):
+                    tmp.remove(d)
+        
+        start += step
+    
+    h_stripes = {}
+    v_stripes = {}
+    for h in h_candi:
+        if len(h_candi[h]):
+            h_stripes[h] = h_candi[h]
+    for v in v_candi:
+        if len(v_candi[v]):
+            v_stripes[v] = v_candi[v]
     
     return h_stripes, v_stripes
-
-
-
-
-
-
-
-

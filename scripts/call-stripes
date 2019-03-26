@@ -44,6 +44,11 @@ def getargs():
     group_2.add_argument('--maxapart', type = int, default = 3000000, help = '''We only search bin paris
                          separated by this size of genomic distance.''')
     group_2.add_argument('--nproc', type = int, default = 1, help = 'Number of worker processes.')
+    group_2.add_argument('--min-seed-len', type = int, default = 6)
+    group_2.add_argument('--max-gap', type = int, default = 5)
+    group_2.add_argument('--min-stripe-len', type = int, default = 9)
+    group_2.add_argument('--window-size', type = int, default = 10000000)
+    group_2.add_argument('--smooth-factor', type = int, default = 1)
     
     ## Parse the command-line arguments
     commands = sys.argv[1:]
@@ -99,12 +104,14 @@ def run():
         l_n = args.local_num
         b_n = args.background_length
         fold = args.fold_enrichment
+        ws = args.window_size
+        sf = args.smooth_factor
 
         import cooler
         from multiprocess import Pool
         import numpy as np
         from scipy import sparse
-        from stripecaller.callers import call_stripes
+        from stripecaller.callers import call_stripes, remove_compartment_stripes
 
         def worker(tuple_args):
             Lib, key, l_n, b_n, siglevel, fold, maxapart, res = tuple_args
@@ -130,12 +137,14 @@ def run():
 
             del cH
 
-            key = key.lstrip('chr')
+            #key = key.lstrip('chr')
             h_candi, v_candi = call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
 
             del M, cM
 
-            return key
+            h_stripes, v_stripes = remove_compartment_stripes(Lib, key, h_candi, v_candi, window=ws, smooth_factor=sf)
+
+            return key, h_stripes, v_stripes
         
         logger.info('Loading contact matrices from cool ...')
         Lib = cooler.Cooler(args.path)
@@ -156,6 +165,16 @@ def run():
             results = pool.map(worker, Params)
             pool.close()
             pool.join()
+        
+        for key, h_stripes, v_stripes in results:
+            for h in h_stripes:
+                for d in h_stripes[h]:
+                    tmp = [key, str(h*res), str(h*res+res), key, str(d[0]*res), str(d[1]*res)]
+                    OF.write('\t'.join(tmp)+'\n')
+            for v in v_stripes:
+                for d in v_stripes[v]:
+                    tmp = [key, str(d[0]*res), str(d[1]*res), key, str(v*res), str(v*res+res)]
+                    OF.write('\t'.join(tmp)+'\n')
 
         OF.flush()
         OF.close()
