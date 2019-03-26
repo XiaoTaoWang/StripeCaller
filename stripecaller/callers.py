@@ -1,11 +1,9 @@
-import logging
-from collections import defaultdict
+import logging, bisect, copy
+from collections import defaultdict, Counter
 import numpy as np
 from scipy import sparse
 from scipy.stats import poisson
-from scipy.signal import convolve2d
 from scipy.signal import find_peaks, peak_widths
-from sklearn.decomposition import PCA
 
 logger = logging.getLogger(__name__)
 
@@ -265,118 +263,104 @@ def local_cluster(candi_dict, min_count=9, min_dis=50000, wlen=100000, res=10000
 
     return anchor_, coords_
 
-        
-def remove_compartment_stripes(Lib, chrom, h_candi, v_candi, window=10000000, smooth_factor=1):
+def remove_compartment_stripes(stripes, TADs, chrom):
 
-    res = Lib.binsize
-    min_matrix = 10
-    kernel = np.ones((smooth_factor, smooth_factor))
-    step = window//2
+    ref = TADs[chrom]
+    tmp = copy.deepcopy(stripes)
+    for k in stripes:
+        for d in stripes[k]:
+            count_pixel = 0
+            count_tads = []
+            for i in range(d[0], d[1]):
+                inter = [i, k] if i < k else [k, i]
+                cache = check_in(inter, ref)
+                if len(cache):
+                    count_pixel += 1
+                for t in cache:
+                    count_tads.append(t)
+            if (not count_pixel) and (not len(count_tads)):
+                tmp[k].remove(d)
+                continue
+            count_tads = Counter(count_tads).most_common(1)[0]
+            if (count_pixel / (d[1] - d[0]) < 0.9) and (count_tads[1] / (count_tads[0][1] - count_tads[0][0]) < 0.5):
+                tmp[k].remove(d)
+    
+    corrected = {}
+    for k in tmp:
+        if len(tmp[k]):
+            corrected[k] = tmp[k]
+    
+    return corrected
 
-    # consistent expected value
-    cM = Lib.matrix(balance=True, sparse=True).fetch(chrom)
-    tmp = np.isfinite(Lib.bins().fetch(chrom)['weight'].values)
-    maxdis = min(cM.shape[0]-1, window//res)
-    pre_cal = {}
-    for i in range(maxdis+1):
-        if i > 0:
-            valid = tmp[:-i] * tmp[i:]
-        else:
-            valid = tmp
-        current = cM.diagonal(i)[valid]
-        if current.size > 0:
-            v = current.mean()
-            pre_cal[i] = v
+def remove_loop_pixels(stripes, loops, chrom, min_stripe_len=9):
 
-    start = 0
-    while Lib.chromsizes[chrom] - start > res*min_matrix:
-        end = min(Lib.chromsizes[chrom], start+window)
-        mask = np.isnan(Lib.bins().fetch((chrom,start,end))['weight'].values) # gaps
-        tmp = np.logical_not(mask) # valid rows or columns
-        if tmp.sum() < min_matrix:
-            start += step
-            continue
-        cM = Lib.matrix(balance=True, sparse=False).fetch((chrom, start, end))
-        cM[np.isnan(cM)] = 0
-        # smooth matrix
-        smooth = convolve2d(cM, kernel, mode='same')
-        # expected matrix
-        expected = np.zeros_like(cM)
-        idx = range(expected.shape[0])
-        for i in idx:
-            if i in pre_cal:
-                if i > 0:
-                    expected[idx[:-i], idx[i:]] = pre_cal[i]
-                    expected[idx[i:], idx[:-i]] = pre_cal[i]
+    corrected = {}
+    for k in stripes:
+        tmp = []
+        for d in stripes[k]:
+            for i in range(d[0], d[1]):
+                if i < k:
+                    if not (i, k) in loops[chrom]:
+                        tmp.append(i)
                 else:
-                    expected[idx, idx] = pre_cal[i]
-        expected = convolve2d(expected, kernel, mode='same') # smooth the expected matrix with same smoothing factor
-        # PCA
-        obs_exp = np.zeros_like(expected)
-        obs_exp[expected!=0] = smooth[expected!=0] / expected[expected!=0]
-        # remove gaps
-        index = list(np.where(mask)[0])
-        convert_index = np.where(np.logical_not(mask))[0]
-        temp = np.delete(obs_exp, index, 0)
-        new_obs_exp = np.delete(temp, index, 1)
-        # pearson correlation matrix
-        pearson = np.corrcoef(new_obs_exp)
-        pca = PCA(n_components=3, whiten=True, svd_solver='arpack')
-        fp = pca.fit_transform(pearson)[:,0]
-        # map back to original coordinates
-        n = obs_exp.shape[0]
-        arr = np.zeros(n)
-        arr[convert_index] = fp # PC1
+                    if not (k, i) in loops[chrom]:
+                        tmp.append(i)
+        tmp = np.r_[tmp]
+        if len(tmp) < min_stripe_len:
+            continue
+        pieces, _ = consecutive_runs(tmp)
+        domains = []
+        for p in pieces:
+            if len(p) >= min_stripe_len:
+                domains.append([p[0], p[-1]+1])
+        if len(domains):
+            corrected[k] = domains
+    
+    return corrected
 
-        # correct horizontal stripes
-        for h in h_candi:
-            rh = h - start//res
-            if (rh < 0) or (rh + 1 > arr.size):
-                continue
-            tmp = h_candi[h]
-            for d in tmp:
-                count = 0
-                for i in range(d[0], d[1]):
-                    ri = i - start//res
-                    if (ri < 0) or (ri + 1 > arr.size):
-                        continue
-                    if (arr[rh] > 0.5) and (arr[ri] > 0.5) and ((arr[rh:ri+1]<-0.5).sum() > 0):
-                        count += 1
-                    else:
-                        if (arr[rh] < -0.5) and (arr[ri] < -0.5) and ((arr[rh:ri+1]>0.5).sum() > 0):
-                            count += 1
-                if (count / (d[1]-d[0]) > 0.2):
-                    tmp.remove(d)
-        
-        # correct vertical stripes
-        for v in v_candi:
-            rv = v - start//res
-            if (rv < 0) or (rv + 1 > arr.size):
-                continue
-            tmp = v_candi[v]
-            for d in tmp:
-                count = 0
-                for i in range(d[0], d[1]):
-                    ri = i - start//res
-                    if (ri < 0) or (ri + 1 > arr.size):
-                        continue
-                    if (arr[rv] > 0.5) and (arr[ri] > 0.5) and ((arr[ri:rv+1]<-0.5).sum() > 0):
-                        count += 1
-                    else:
-                        if (arr[rv] < -0.5) and (arr[ri] < -0.5) and ((arr[ri:rv+1]>0.5).sum() > 0):
-                            count += 1
-                if (count / (d[1]-d[0]) > 0.2):
-                    tmp.remove(d)
-        
-        start += step
+def check_in(coord, List, mismatch=1):
+
+    cache = set()
+    idx = max(0, bisect.bisect(List, coord)-1)
+    for q in List[idx:]:
+        if ((q[0] <= coord[0]) and (q[1] >= coord[1])) or \
+           ((abs(q[0]-coord[0]) <= mismatch) and (q[0] <= coord[1] <= q[1])) or \
+           ((abs(q[1]-coord[1]) <= mismatch) and (q[0] <= coord[0] <= q[1])):
+            cache.add(tuple(q))
     
-    h_stripes = {}
-    v_stripes = {}
-    for h in h_candi:
-        if len(h_candi[h]):
-            h_stripes[h] = h_candi[h]
-    for v in v_candi:
-        if len(v_candi[v]):
-            v_stripes[v] = v_candi[v]
+    return cache
+
+def load_TADs(fil, res):
+
+    tads = {}
+    with open(fil, 'r') as source:
+        for line in source:
+            parse = line.rstrip().split()
+            chrom, s, e = parse[0], int(parse[1]), int(parse[2])
+            if len(parse)==4:
+                if parse[-1]!='0':
+                    continue
+            if not chrom in tads:
+                tads[chrom] = []
+            tads[chrom].append([s//res, e//res])
+    for c in tads:
+        tads[c].sort()
     
-    return h_stripes, v_stripes
+    return tads
+
+def load_loops(fil, res, mismatch=1):
+
+    loops = {}
+    with open(fil, 'r') as source:
+        for line in source:
+            parse = line.rstrip().split()
+            chrom, s1, e1, s2, e2 = parse[0], int(parse[1]), int(parse[2]), int(parse[4]), int(parse[5])
+            p1 = (s1 + e1) // (2*res)
+            p2 = (s2 + e2) // (2*res)
+            if not chrom in loops:
+                loops[chrom] = set()
+            for i in range(max(p1-mismatch,0), p1+mismatch+1):
+                for j in range(max(p2-mismatch,0), p2+mismatch+1):
+                    loops[chrom].add((i, j))
+    
+    return loops

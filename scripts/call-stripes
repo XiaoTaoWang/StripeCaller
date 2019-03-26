@@ -30,6 +30,10 @@ def getargs():
                         'chromosomes will be included. Specially, "#" stands for chromosomes '
                         'with numerical labels. "--chroms" with zero argument will include '
                         'all chromosome data.')
+    group_1.add_argument('-I', '--loop-file', help = '''Path to a loop file in bedpe format.''')
+    group_1.add_argument('-T', '--tad-file', help = '''Path to a TAD file in bed format.''')
+    group_1.add_argument('--no-pre', action = 'store_true', help = '''Whether your chromosome
+                         labels have the "chr" prefix or not.''')
     
     ## About the algorithm
     group_2 = parser.add_argument_group(title = 'Algorithm Parameters:')
@@ -44,11 +48,12 @@ def getargs():
     group_2.add_argument('--maxapart', type = int, default = 3000000, help = '''We only search bin paris
                          separated by this size of genomic distance.''')
     group_2.add_argument('--nproc', type = int, default = 1, help = 'Number of worker processes.')
-    group_2.add_argument('--min-seed-len', type = int, default = 6)
-    group_2.add_argument('--max-gap', type = int, default = 5)
-    group_2.add_argument('--min-stripe-len', type = int, default = 9)
-    group_2.add_argument('--window-size', type = int, default = 10000000)
-    group_2.add_argument('--smooth-factor', type = int, default = 1)
+    group_2.add_argument('--min-seed-len', type = int, default = 6,
+                         help = '''Minimum length of seed stretches.''')
+    group_2.add_argument('--max-gap', type = int, default = 5,
+                         help = '''Maximum allowed gap size when merging two stretches together.''')
+    group_2.add_argument('--min-stripe-len', type = int, default = 9,
+                         help = '''Minimum length of output stripes''')
     
     ## Parse the command-line arguments
     commands = sys.argv[1:]
@@ -104,17 +109,18 @@ def run():
         l_n = args.local_num
         b_n = args.background_length
         fold = args.fold_enrichment
-        ws = args.window_size
-        sf = args.smooth_factor
+        loop_fil = args.loop_file
+        tad_fil = args.tad_file
 
         import cooler
         from multiprocess import Pool
         import numpy as np
         from scipy import sparse
-        from stripecaller.callers import call_stripes, remove_compartment_stripes
+        from stripecaller.callers import call_stripes, remove_compartment_stripes, \
+            load_loops, remove_loop_pixels, load_TADs
 
         def worker(tuple_args):
-            Lib, key, l_n, b_n, siglevel, fold, maxapart, res = tuple_args
+            Lib, key, l_n, b_n, siglevel, fold, maxapart, res, loop_fil = tuple_args
             H = Lib.matrix(balance=False, sparse=True).fetch(key)
             
             chromLen = H.shape[0]
@@ -142,8 +148,18 @@ def run():
 
             del M, cM
 
-            h_stripes, v_stripes = remove_compartment_stripes(Lib, key, h_candi, v_candi, window=ws, smooth_factor=sf)
+            if not tad_fil is None:
+                tads = load_TADs(tad_fil, res)
+                h_candi = remove_compartment_stripes(h_candi, tads, key)
+                v_candi = remove_compartment_stripes(v_candi, tads, key)
 
+            if not loop_fil is None:
+                loops = load_loops(loop_fil, res)
+                h_stripes = remove_loop_pixels(h_candi, loops, key, min_stripe_len=9)
+                v_stripes = remove_loop_pixels(v_candi, loops, key, min_stripe_len=9)
+            else:
+                h_stripes, v_stripes = h_candi, v_candi
+                
             return key, h_stripes, v_stripes
         
         logger.info('Loading contact matrices from cool ...')
@@ -156,7 +172,7 @@ def run():
         for key in Lib.chromnames:
             chromlabel = key.lstrip('chr')
             if ((not args.chroms) or (chromlabel.isdigit() and '#' in args.chroms) or (chromlabel in args.chroms)):
-                Params.append((Lib, key, l_n, b_n, args.siglevel, fold, args.maxapart, res))
+                Params.append((Lib, key, l_n, b_n, args.siglevel, fold, args.maxapart, res, loop_fil))
         
         if args.nproc == 1:
             results = map(worker, Params)
@@ -167,6 +183,8 @@ def run():
             pool.join()
         
         for key, h_stripes, v_stripes in results:
+            if args.no_pre:
+                key = 'chr'+key
             for h in h_stripes:
                 for d in h_stripes[h]:
                     tmp = [key, str(h*res), str(h*res+res), key, str(d[0]*res), str(d[1]*res)]
