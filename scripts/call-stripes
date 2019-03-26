@@ -100,6 +100,9 @@ def run():
                    '# Length of background = {}'.format(args.background_length),
                    '# Significant Level = {}'.format(args.siglevel),
                    '# Maximum Genomic distance = {}'.format(args.maxapart),
+                   '# Minimum Seed Size = {}'.format(args.min_seed_len),
+                   '# Maximum Gap Size in Merging = {}'.format(args.max_gap),
+                   '# Minimum Stripe Length = {}'.format(args.min_stripe_len),
                    '# Number of Processes = {}'.format(args.nproc)
                    ]
         
@@ -109,6 +112,9 @@ def run():
         l_n = args.local_num
         b_n = args.background_length
         fold = args.fold_enrichment
+        min_seed_len = args.min_seed_len
+        max_gap = args.max_gap
+        min_stripe_len = args.min_stripe_len
         loop_fil = args.loop_file
         tad_fil = args.tad_file
 
@@ -120,7 +126,7 @@ def run():
             load_loops, remove_loop_pixels, load_TADs
 
         def worker(tuple_args):
-            Lib, key, l_n, b_n, siglevel, fold, maxapart, res, loop_fil = tuple_args
+            Lib, key, l_n, b_n, siglevel, fold, maxapart, res, min_seed_len, max_gap, min_stripe_len, loop_fil, tad_fil = tuple_args
             H = Lib.matrix(balance=False, sparse=True).fetch(key)
             
             chromLen = H.shape[0]
@@ -144,7 +150,8 @@ def run():
             del cH
 
             #key = key.lstrip('chr')
-            h_candi, v_candi = call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
+            h_candi, v_candi = call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
+                                            min_seed_len=min_seed_len, max_gap=max_gap, min_stripe_len=min_stripe_len)
 
             del M, cM
 
@@ -155,8 +162,8 @@ def run():
 
             if not loop_fil is None:
                 loops = load_loops(loop_fil, res)
-                h_stripes = remove_loop_pixels(h_candi, loops, key, min_stripe_len=9)
-                v_stripes = remove_loop_pixels(v_candi, loops, key, min_stripe_len=9)
+                h_stripes = remove_loop_pixels(h_candi, loops, key, min_stripe_len=min_stripe_len)
+                v_stripes = remove_loop_pixels(v_candi, loops, key, min_stripe_len=min_stripe_len)
             else:
                 h_stripes, v_stripes = h_candi, v_candi
                 
@@ -172,7 +179,8 @@ def run():
         for key in Lib.chromnames:
             chromlabel = key.lstrip('chr')
             if ((not args.chroms) or (chromlabel.isdigit() and '#' in args.chroms) or (chromlabel in args.chroms)):
-                Params.append((Lib, key, l_n, b_n, args.siglevel, fold, args.maxapart, res, loop_fil))
+                Params.append((Lib, key, l_n, b_n, args.siglevel, fold, args.maxapart, res, min_seed_len,
+                               max_gap, min_stripe_len, loop_fil, tad_fil))
         
         if args.nproc == 1:
             results = map(worker, Params)

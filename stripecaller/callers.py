@@ -158,7 +158,7 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
         if len(tmp):
             h_stripes[anchor_x] = tmp
 
-    xi, yi = local_cluster(h_stripes, min_count=min_stripe_len)
+    xi, yi = local_cluster(h_stripes, min_count=min_stripe_len, res=res)
     # second run
     h_stripes = {}
     for anchor_x in np.unique(xi):
@@ -189,7 +189,7 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
         if len(tmp):
             v_stripes[anchor_y] = tmp
     
-    yi, xi = local_cluster(v_stripes, min_count=min_stripe_len)
+    yi, xi = local_cluster(v_stripes, min_count=min_stripe_len, res=res)
     # second run
     v_stripes = {}
     for anchor_y in np.unique(yi):
@@ -206,9 +206,9 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
 
     return h_stripes, v_stripes
 
-def local_cluster(candi_dict, min_count=9, min_dis=50000, wlen=100000, res=10000):
+def local_cluster(candi_dict, min_count=9, min_dis=50000, wlen=400000, res=10000):
 
-    min_dis = min_dis//res
+    min_dis = max(min_dis//res, 1)
     wlen = min(wlen//res, 10)
 
     count = defaultdict(int)
