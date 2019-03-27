@@ -159,20 +159,21 @@ def call_stripes(key, M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
         if len(tmp):
             h_stripes[anchor_x] = tmp
 
-    xi, yi = local_cluster(h_stripes, min_count=min_stripe_len, res=res)
-    # second run
-    h_stripes = {}
-    for anchor_x in np.unique(xi):
-        ys = yi[xi==anchor_x]
-        pieces, maxlen = consecutive_runs(ys)
-        if maxlen < min_seed_len:
-            continue
-        tmp = extend_stretches(pieces,
-                               min_seed_len=min_seed_len,
-                               max_gap=max_gap,
-                               min_stripe_len=min_stripe_len)
-        if len(tmp):
-            h_stripes[anchor_x] = tmp
+    if len(h_stripes):
+        xi, yi = local_cluster(h_stripes, min_count=min_stripe_len, res=res)
+        # second run
+        h_stripes = {}
+        for anchor_x in np.unique(xi):
+            ys = yi[xi==anchor_x]
+            pieces, maxlen = consecutive_runs(ys)
+            if maxlen < min_seed_len:
+                continue
+            tmp = extend_stretches(pieces,
+                                   min_seed_len=min_seed_len,
+                                   max_gap=max_gap,
+                                   min_stripe_len=min_stripe_len)
+            if len(tmp):
+                h_stripes[anchor_x] = tmp
     
     # call vertical stripes
     logger.info('Chrom: {0}, calling vertical stripes ...'.format(key))
@@ -191,20 +192,21 @@ def call_stripes(key, M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
         if len(tmp):
             v_stripes[anchor_y] = tmp
     
-    yi, xi = local_cluster(v_stripes, min_count=min_stripe_len, res=res)
-    # second run
-    v_stripes = {}
-    for anchor_y in np.unique(yi):
-        xs = xi[yi==anchor_y]
-        pieces, maxlen = consecutive_runs(xs)
-        if maxlen < min_seed_len:
-            continue
-        tmp = extend_stretches(pieces,
-                               min_seed_len=min_seed_len,
-                               max_gap=max_gap,
-                               min_stripe_len=min_stripe_len)
-        if len(tmp):
-            v_stripes[anchor_y] = tmp
+    if len(v_stripes):
+        yi, xi = local_cluster(v_stripes, min_count=min_stripe_len, res=res)
+        # second run
+        v_stripes = {}
+        for anchor_y in np.unique(yi):
+            xs = xi[yi==anchor_y]
+            pieces, maxlen = consecutive_runs(xs)
+            if maxlen < min_seed_len:
+                continue
+            tmp = extend_stretches(pieces,
+                                   min_seed_len=min_seed_len,
+                                   max_gap=max_gap,
+                                   min_stripe_len=min_stripe_len)
+            if len(tmp):
+                v_stripes[anchor_y] = tmp
 
     return h_stripes, v_stripes
 
