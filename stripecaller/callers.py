@@ -139,10 +139,11 @@ def extend_stretches(pieces, min_seed_len=6, max_gap=5, min_stripe_len=9):
     
     return stripes
 
-def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
+def call_stripes(key, M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
                  min_seed_len=6, max_gap=5, min_stripe_len=9):
     
     # call horizontal stripes
+    logger.info('Chrom: {0}, calling horizontal stripes ...'.format(key))
     # first run
     xi, yi = _horizontal_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
     h_stripes = {}
@@ -174,6 +175,7 @@ def call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
             h_stripes[anchor_x] = tmp
     
     # call vertical stripes
+    logger.info('Chrom: {0}, calling vertical stripes ...'.format(key))
     # first run
     xi, yi = _vertical_stripe(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen)
     v_stripes = {}

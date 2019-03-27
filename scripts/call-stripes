@@ -150,7 +150,7 @@ def run():
             del cH
 
             #key = key.lstrip('chr')
-            h_candi, v_candi = call_stripes(M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
+            h_candi, v_candi = call_stripes(key, M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
                                             min_seed_len=min_seed_len, max_gap=max_gap, min_stripe_len=min_stripe_len)
 
             del M, cM
@@ -172,8 +172,7 @@ def run():
         logger.info('Loading contact matrices from cool ...')
         Lib = cooler.Cooler(args.path)
         res = Lib.binsize
-
-        logger.info('Calling Stripes ...')
+        
         OF = open(args.output, 'w')
         Params = []
         for key in Lib.chromnames:
