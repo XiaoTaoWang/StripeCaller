@@ -3,8 +3,6 @@
 # Author: XiaoTao Wang
 
 """
-Setup script for hicpeaks.
-
 This is a free software under GPLv3. Therefore, you can modify, redistribute
 or even mix it with other GPL-compatible codes. See the file LICENSE
 included with the distribution for more details.
