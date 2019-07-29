@@ -5,9 +5,9 @@
 
 ## Required modules
 
-import argparse, sys, os, hicpeaks
+import argparse, sys, os, stripecaller
 
-currentVersion = hicpeaks.__version__
+currentVersion = stripecaller.__version__
 
 def getargs():
     ## Construct an ArgumentParser object for command-line arguments
