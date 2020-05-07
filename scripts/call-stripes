@@ -34,6 +34,8 @@ def getargs():
     group_1.add_argument('-T', '--tad-file', help = '''Path to a TAD file in bed format.''')
     group_1.add_argument('--no-pre', action = 'store_true', help = '''Whether your chromosome
                          labels have the "chr" prefix or not.''')
+    group_1.add_argument('--use-raw', action = 'store_true', help = '''If specified, use raw signals
+                         instead of ICE to calculate the expected.''')
     
     ## About the algorithm
     group_2 = parser.add_argument_group(title = 'Algorithm Parameters:')
@@ -96,6 +98,7 @@ def run():
                    '# Output file = {}'.format(args.output),
                    '# Cooler URI = {}'.format(args.path),
                    '# Chromosomes = {}'.format(args.chroms),
+                   '# Use Raw Signals = {}'.format(args.use_raw),
                    '# Number of local signal = {}'.format(args.local_num),
                    '# Length of background = {}'.format(args.background_length),
                    '# Significant Level = {}'.format(args.siglevel),
@@ -126,7 +129,7 @@ def run():
             load_loops, remove_loop_pixels, load_TADs
 
         def worker(tuple_args):
-            Lib, key, l_n, b_n, siglevel, fold, maxapart, res, min_seed_len, max_gap, min_stripe_len, loop_fil, tad_fil = tuple_args
+            Lib, key, l_n, b_n, siglevel, fold, maxapart, res, min_seed_len, max_gap, min_stripe_len, loop_fil, tad_fil, use_raw = tuple_args
             H = Lib.matrix(balance=False, sparse=True).fetch(key)
             
             chromLen = H.shape[0]
@@ -138,16 +141,19 @@ def run():
 
             del H
 
-            cH = Lib.matrix(balance=True, sparse=True).fetch(key)
-            cDiags = []
-            for i in valid_diag:
-                diag = cH.diagonal(i)
-                mask = np.isnan(diag)
-                diag[mask] = 0
-                cDiags.append(diag)
-            cM = sparse.diags(cDiags, valid_diag, format='csr')
+            if use_raw:
+                cM = M
+            else:
+                cH = Lib.matrix(balance=True, sparse=True).fetch(key)
+                cDiags = []
+                for i in valid_diag:
+                    diag = cH.diagonal(i)
+                    mask = np.isnan(diag)
+                    diag[mask] = 0
+                    cDiags.append(diag)
+                cM = sparse.diags(cDiags, valid_diag, format='csr')
 
-            del cH
+                del cH
 
             #key = key.lstrip('chr')
             h_candi, v_candi = call_stripes(key, M, cM, maxapart, res, l_n, b_n, siglevel, fold, chromLen,
@@ -179,7 +185,7 @@ def run():
             chromlabel = key.lstrip('chr')
             if ((not args.chroms) or (chromlabel.isdigit() and '#' in args.chroms) or (chromlabel in args.chroms)):
                 Params.append((Lib, key, l_n, b_n, args.siglevel, fold, args.maxapart, res, min_seed_len,
-                               max_gap, min_stripe_len, loop_fil, tad_fil))
+                               max_gap, min_stripe_len, loop_fil, tad_fil, args.use_raw))
         
         if args.nproc == 1:
             results = map(worker, Params)
