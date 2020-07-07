@@ -51,6 +51,6 @@ Usage
 Open a terminal, type ``stripecaller -h`` for help information.
 
 
-Citation
-========
+Reference
+=========
 .. [1] Vian, L. et al. The Energetics and Physiological Impact of Cohesin Extrusion. Cell 175, 292-294, doi:10.1016/j.cell.2018.09.002 (2018).
