@@ -48,7 +48,7 @@ Finally, install the *stripecaller* by *pip*::
 
 Usage
 =====
-Open a terminal, type ``stripecaller -h`` for help information.
+Open a terminal, type ``call-stripes -h`` for help information.
 
 
 Reference
